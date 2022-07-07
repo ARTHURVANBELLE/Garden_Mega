@@ -2,7 +2,10 @@
 #include <Ultrasonic.h>
 #include <TimerOne.h>
 #include <SPI.h>  
-#include "RF24.h"
+#include <RTClib.h>
+#include <nRF24L01.h>
+#include <RF24.h>
+#include <RH_NRF24.h>
 
 // Abrevoir toutes les 2h pendant 3s
 
@@ -37,6 +40,10 @@ volatile unsigned long count = 0; // use volatile for shared variables
 
 Ultrasonic ultrasonic(2, 3);
 
+RH_NRF24 nrf24(23,22);
+
+
+/*
 RF24 myRadio (22, 23);
 byte addresses[][6] = {"0"};
 
@@ -54,8 +61,10 @@ struct package {
 typedef struct package Package;
 Package dataRecieve;
 Package dataTransmit;
-
+*/
 char rec[15];
+char rxMessage[25];
+const int RH_RF24_MAX_MESSAGE_LEN = 25;
 
 void pump(bool mode){
   if (mode == 1 && !digitalRead(IN_NIV2)){
@@ -123,7 +132,7 @@ void setup()
   Timer1.initialize(1000000);
   Timer1.attachInterrupt(counter); // blinkLED to run every 1 second
 
-
+  /*
   delay(1000);
   
   myRadio.begin();  
@@ -133,6 +142,16 @@ void setup()
   
   myRadio.openReadingPipe(1, addresses[0]);
   myRadio.startListening();
+*/
+
+if (!nrf24.init())
+  Serial.println("init failed");
+// Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
+if (!nrf24.setChannel(1))
+  Serial.println("setChannel failed");
+if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm))
+  Serial.println("setRF failed");   
+Serial.println("setup Done") ;
 }
 
 
@@ -145,21 +164,36 @@ void loop()
   currentTime = millis();
   unsigned long copyCount;
 
+/*
   myRadio.startListening();
   if (myRadio.available()){
     while ( myRadio.available()) {
       myRadio.read( &rec, sizeof(rec) );
-    }/*
+    }
     Serial.println(dataRecieve.mode);
     Serial.println(dataRecieve.gar);
     Serial.println(dataRecieve.pum);
     Serial.println(dataRecieve.chi);
     Serial.println(dataRecieve.lev);
-    */
+    
    Serial.println(rec);
+   Serial.println("REC");
+  }*/
+
+  if (nrf24.available())
+  {
+    // Should be a message for us now   
+    uint8_t buf[RH_RF24_MAX_MESSAGE_LEN];
+    uint8_t len = sizeof(buf);
+    if (nrf24.recv(buf, &len))
+    {
+      Serial.print("message: ");
+      Serial.println((char*)buf);
+      sprintf(rxMessage,"%s",buf);
+    }
   }
 
-  delay(100);
+
 
 
   if (digitalRead(IN_NIV1)){

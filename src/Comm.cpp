@@ -4,7 +4,7 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 #include <RH_NRF24.h>
-
+/*
 // Singleton instance of the radio driver
 
 char rxMessage[25];
@@ -48,7 +48,7 @@ void setupComm(){
   Serial.println("setup Done") ;
 }
 
-void communicate(){
+void communicate(){/*
   RH_NRF24 nrf24;
   if (nrf24.available())
   {
@@ -72,5 +72,6 @@ void communicate(){
     {
       Serial.println("recv failed");
     }
-  }
+  }*/
 }
+
