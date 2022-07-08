@@ -15,6 +15,7 @@ const int IN_PUM = 36;
 const int IN_GAR = 34;
 const int IN_CHI = 32;
 
+int modeA = 0;
 bool autom = 1;
 bool extra;
 bool gar;
@@ -30,6 +31,7 @@ bool lastState_3;
 bool currentState_3;
 bool pumping;
 bool flagArros;
+bool flagRX;
 
 int currentTime;
 int lastTime = 0;
@@ -46,7 +48,7 @@ RH_NRF24 nrf24(23,22);
 /*
 RF24 myRadio (22, 23);
 byte addresses[][6] = {"0"};
-
+*/
 struct package {
   int mode;
   bool chi;
@@ -61,7 +63,7 @@ struct package {
 typedef struct package Package;
 Package dataRecieve;
 Package dataTransmit;
-*/
+
 char rec[15];
 char rxMessage[25];
 const int RH_RF24_MAX_MESSAGE_LEN = 25;
@@ -132,26 +134,15 @@ void setup()
   Timer1.initialize(1000000);
   Timer1.attachInterrupt(counter); // blinkLED to run every 1 second
 
-  /*
-  delay(1000);
-  
-  myRadio.begin();  
-  myRadio.setChannel(115); 
-  myRadio.setPALevel(RF24_PA_MAX);
-  myRadio.setDataRate( RF24_250KBPS );
-  
-  myRadio.openReadingPipe(1, addresses[0]);
-  myRadio.startListening();
-*/
+  if (!nrf24.init())
+    Serial.println("init failed");
+  // Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
+  if (!nrf24.setChannel(1))
+    Serial.println("setChannel failed");
+  if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm))
+    Serial.println("setRF failed");   
 
-if (!nrf24.init())
-  Serial.println("init failed");
-// Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
-if (!nrf24.setChannel(1))
-  Serial.println("setChannel failed");
-if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm))
-  Serial.println("setRF failed");   
-Serial.println("setup Done") ;
+  Serial.println("setup Done") ;
 }
 
 
@@ -163,22 +154,7 @@ void loop()
   currentState_3 = digitalRead(IN_CHI);
   currentTime = millis();
   unsigned long copyCount;
-
-/*
-  myRadio.startListening();
-  if (myRadio.available()){
-    while ( myRadio.available()) {
-      myRadio.read( &rec, sizeof(rec) );
-    }
-    Serial.println(dataRecieve.mode);
-    Serial.println(dataRecieve.gar);
-    Serial.println(dataRecieve.pum);
-    Serial.println(dataRecieve.chi);
-    Serial.println(dataRecieve.lev);
-    
-   Serial.println(rec);
-   Serial.println("REC");
-  }*/
+  flagRX = 0;
 
   if (nrf24.available())
   {
@@ -187,13 +163,65 @@ void loop()
     uint8_t len = sizeof(buf);
     if (nrf24.recv(buf, &len))
     {
-      Serial.print("message: ");
+      Serial.println("message: ");
       Serial.println((char*)buf);
       sprintf(rxMessage,"%s",buf);
+
+      uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
+      sprintf(data,"%i%d%d%d",modeA,gar,pum,chi);
+      nrf24.send(data, sizeof(data));
+      nrf24.waitPacketSent();
+      Serial.print("Sent a reply");
+
+      Serial.print((rxMessage[0]));
+      Serial.print((rxMessage[1]));
+      Serial.print((rxMessage[2]));
+      Serial.println((rxMessage[3]));
+
+      Serial.println(atoi(rxMessage));
+      int proto = atoi(rxMessage);
+
+      if (proto >= 2000){
+        Serial.println("MODE EXTRA RX");
+        proto -= 2000;
+        modeA = 2;
+      }
+      else if (proto >= 1000){
+        Serial.println("MODE MANU RX");
+        proto -= 1000;
+        modeA = 1;
+      }
+      else{
+        Serial.println("MODE AUTO RX");
+        modeA = 0;
+      }
+
+      if (proto >= 100){
+        gar =0;
+        proto -= 100;
+      }
+      else{
+        gar =1;
+      }   
+
+      if (proto >= 10){
+        pum = 0;
+        proto -= 10;
+      }  
+      else{
+        pum = 1;
+      }
+
+      if (proto == 1){
+        chi = 0;
+      }
+      else{
+        chi = 1;
+      }
+      
+      flagRX = 1;
     }
   }
-
-
 
 
   if (digitalRead(IN_NIV1)){
@@ -210,19 +238,19 @@ void loop()
     analogWrite(27,255);
   }
 
-  if (currentState != lastState && currentState ==1)
+  if ((currentState != lastState && currentState ==1) or flagRX)
   {
-    if (autom){
+    if (autom or modeA==1){
       autom = 0;
       extra = 0;
       if (!flagArros){
         garden(0);
       }
     }
-    else if (!autom && !extra){
+    else if ((!autom && !extra) or modeA == 2){
       extra = 1;
     }
-    else if (extra){
+    else if (extra or modeA == 0){
       autom = 1;
     }
   }
@@ -284,7 +312,7 @@ void loop()
     lastTime = currentTime;
   }
 
-  if (currentState_3 != lastState_3 && currentState_3 ==1)
+  if ((currentState_3 != lastState_3 && currentState_3 ==1) or flagRX)
   {
     if (chi){
       chicken(0);
@@ -296,7 +324,7 @@ void loop()
     }
   }
 
-  if (currentState_1 != lastState_1 && currentState_1 ==1)
+  if ((currentState_1 != lastState_1 && currentState_1 ==1)or flagRX)
   {
     if (gar){
       garden(0);
@@ -308,7 +336,7 @@ void loop()
     }
   }
 
-  if (currentState_2 != lastState_2 && currentState_2 ==1)
+  if ((currentState_2 != lastState_2 && currentState_2 ==1)or flagRX)
   {
     if (pum){
       pump(0);
