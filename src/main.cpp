@@ -14,14 +14,13 @@
 #define SERVER_ADDRESS 2
 
 
-
 const int IN_NIV1 = 30;
 const int IN_NIV2 = 28;
 const int IN_PUM = 36;
 const int IN_GAR = 34;
 const int IN_CHI = 32;
 
-int modeA = 0;
+int modeA = 3;
 bool autom = 1;
 bool extra;
 bool gar;
@@ -38,32 +37,31 @@ bool currentState_3;
 bool pumping;
 bool flagArros;
 bool flagRX;
+bool overheatPump;
 
 int currentTime;
 int lastTime = 0;
 int currentLux;
 int lastLux;
+int currentLev;
+int lastLev;
+int lastLev_1;
+int lastTimeLev;
+int flagLev;
 
 volatile unsigned long count = 0; // use volatile for shared variables
 
-Ultrasonic ultrasonic(2, 3);
-
 RH_NRF24 nrf24(23,22);
 
-RHReliableDatagram manager(nrf24, SERVER_ADDRESS);
+Ultrasonic ultrasonic(5, 6);
 
 
-
-char rec[15];
-char rxMessage[25];
 const int RH_RF24_MAX_MESSAGE_LEN = 25;
-uint8_t buf[RH_RF24_MAX_MESSAGE_LEN];
-uint8_t len = sizeof(buf);
-uint8_t from;
-uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
+int lastTimeTx;
+
 
 void pump(bool mode){
-  if (mode == 1 && !digitalRead(IN_NIV2)){
+  if (mode == 1 && !digitalRead(IN_NIV2) && !overheatPump){
     analogWrite(38,255);
     analogWrite(35, 0);
     pum = 1;
@@ -73,6 +71,10 @@ void pump(bool mode){
     analogWrite(38,0);
     analogWrite(35, 255);
     pum = 0;
+     if (!autom && !extra){
+      overheatPump = 0;
+      flagLev = 0;
+     }
   }
 }
 
@@ -113,9 +115,25 @@ void counter(void)
   
 }
 
+void txData(){
+
+  uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
+  sprintf(data,"%i%d%d%d%d.%d",modeA,gar,pum,chi,overheatPump,currentLev);
+
+  if ((currentTime - lastTimeTx ) >= 2000){
+    nrf24.send(data, sizeof(data));
+    nrf24.waitPacketSent();
+    lastTimeTx = currentTime;
+    Serial.println((char*)data);
+  }
+
+}
+
 void setup() 
 {
   Serial.begin(115200);
+
+  digitalWrite(8,HIGH);
   
   pinMode(24,INPUT);
   pinMode(IN_NIV1,INPUT);
@@ -128,10 +146,6 @@ void setup()
   Timer1.initialize(1000000);
   Timer1.attachInterrupt(counter); // blinkLED to run every 1 second
   
-  if (!manager.init())
-    Serial.println("init server failed");
-
-
   if (!nrf24.init())
     Serial.println("init failed");
   // Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
@@ -151,71 +165,11 @@ void loop()
   currentState_2 = digitalRead(IN_PUM);
   currentState_3 = digitalRead(IN_CHI);
   currentTime = millis();
+  currentLev = ultrasonic.read(CM);
   unsigned long copyCount;
-  flagRX = 0;
 
 
-  if (manager.available())
-  {
-    // Should be a message for us now   
-
-    if (manager.recvfromAck(buf, &len, &from))
-    {
-      Serial.println("message: ");
-      Serial.println((char*)buf);
-      sprintf(rxMessage,"%s",buf);
-
-      sprintf(data,"%i%d%d%d",modeA,gar,pum,chi);
-
-      if (!manager.sendtoWait(data, sizeof(data), from))
-        Serial.println("sendtoWait failed");
-
-
-      Serial.println(atoi(rxMessage));
-      int proto = atoi(rxMessage);
-
-      if (proto >= 2000){
-        Serial.println("MODE EXTRA RX");
-        proto -= 2000;
-        modeA = 2;
-      }
-      else if (proto >= 1000){
-        Serial.println("MODE MANU RX");
-        proto -= 1000;
-        modeA = 1;
-      }
-      else{
-        Serial.println("MODE AUTO RX");
-        modeA = 0;
-      }
-
-      if (proto >= 100){
-        gar =0;
-        proto -= 100;
-      }
-      else{
-        gar =1;
-      }   
-
-      if (proto >= 10){
-        pum = 0;
-        proto -= 10;
-      }  
-      else{
-        pum = 1;
-      }
-
-      if (proto == 1){
-        chi = 0;
-      }
-      else{
-        chi = 1;
-      }
-      
-      flagRX = 1;
-    }
-  }
-
+  txData();
 
   if (digitalRead(IN_NIV1)){
     analogWrite(29,0);
@@ -233,26 +187,28 @@ void loop()
 
   if ((currentState != lastState && currentState ==1) or flagRX)
   {
-    if (autom or modeA==1){
+    if (autom){
       autom = 0;
       extra = 0;
+      modeA = 3;
       if (!flagArros){
         garden(0);
       }
     }
-    else if ((!autom && !extra) or modeA == 2){
+    else if ((!autom && !extra)){
       extra = 1;
+      modeA = 2;
     }
     else if (extra or modeA == 0){
       autom = 1;
+      modeA = 1;
     }
   }
 
-  if (autom){
+  if (autom){ // remplissage auto et arrosage à la tombée de la nuit
     currentLux = analogRead(A0);
     analogWrite(26,255);
     analogWrite(25,0);
-    //Serial.println(currentLux);
 
     if ((digitalRead(IN_NIV1)==0 && (digitalRead(IN_NIV2)==0))){
       pump(1);
@@ -285,19 +241,28 @@ void loop()
     analogWrite(25,255);
     analogWrite(26,0);
   }
-  else if (extra){
+  else if (extra){ //mode extra : remplissage auto mais pas d'arrosage dans le noir
     analogWrite(25,0);
     analogWrite(26,0);
+
+    if ((digitalRead(IN_NIV1)==0 && (digitalRead(IN_NIV2)==0))){
+      pump(1);
+      pumping = 1;
+    }
+    else if ((!digitalRead(IN_NIV2) && (pumping ==1))){
+      pump(1);
+    }
+    else if (digitalRead(IN_NIV2)){
+      pumping = 0;
+      pump(0);
+    }
   }
 
   if (digitalRead(IN_NIV2)){
       pump(0);
       pumping = 0;
-    }
-
+  }
   
-  //Serial.print(ultrasonic.read());
-
   if ((currentTime-lastTime) >= 7200000){
     chicken(1);
     delay(3000);
@@ -309,11 +274,9 @@ void loop()
   {
     if (chi){
       chicken(0);
-      chi = 0;
     }
     else {
       chicken(1);
-      chi = 1;
     }
   }
 
@@ -321,11 +284,9 @@ void loop()
   {
     if (gar){
       garden(0);
-      gar = 0;
     }
     else {
       garden(1);
-      gar = 1;
     }
   }
 
@@ -333,21 +294,34 @@ void loop()
   {
     if (pum){
       pump(0);
-      pum = 0;
     }
     else {
       pump(1);
-      pum = 1;
     }
   }
   if (analogRead(A0) >= 160){
     flagArros = 1;
   }
-  
+
+  if (pum && !gar && !chi){
+    if ((currentTime - lastTimeLev) >= 120000) {
+      if (currentLev >= lastLev && (abs(currentLev-lastLev)<6)){
+        flagLev += 1;
+      }
+      if (flagLev >= 10){
+        pump(0);
+        overheatPump = 1;
+      }
+      lastTimeLev = currentTime;
+      lastLev = currentLev;
+    }
+  }
+ 
   lastState = currentState; 
   lastState_1 = currentState_1;
   lastState_2 = currentState_2;
   lastState_3 = currentState_3;
+  lastLev_1 = currentLev;
   lastLux = analogRead(A0);
 
 }
