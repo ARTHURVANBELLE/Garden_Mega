@@ -6,8 +6,14 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 #include <RH_NRF24.h>
+#include <RHReliableDatagram.h>
 
 // Abrevoir toutes les 2h pendant 3s
+
+#define CLIENT_ADDRESS 1
+#define SERVER_ADDRESS 2
+
+
 
 const int IN_NIV1 = 30;
 const int IN_NIV2 = 28;
@@ -44,29 +50,17 @@ Ultrasonic ultrasonic(2, 3);
 
 RH_NRF24 nrf24(23,22);
 
-
-/*
-RF24 myRadio (22, 23);
-byte addresses[][6] = {"0"};
-*/
-struct package {
-  int mode;
-  bool chi;
-  bool pum;
-  bool gar;
-  bool niv1;
-  bool niv2;
-  int lev;
-};
+RHReliableDatagram manager(nrf24, SERVER_ADDRESS);
 
 
-typedef struct package Package;
-Package dataRecieve;
-Package dataTransmit;
 
 char rec[15];
 char rxMessage[25];
 const int RH_RF24_MAX_MESSAGE_LEN = 25;
+uint8_t buf[RH_RF24_MAX_MESSAGE_LEN];
+uint8_t len = sizeof(buf);
+uint8_t from;
+uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
 
 void pump(bool mode){
   if (mode == 1 && !digitalRead(IN_NIV2)){
@@ -133,6 +127,10 @@ void setup()
 
   Timer1.initialize(1000000);
   Timer1.attachInterrupt(counter); // blinkLED to run every 1 second
+  
+  if (!manager.init())
+    Serial.println("init server failed");
+
 
   if (!nrf24.init())
     Serial.println("init failed");
@@ -156,27 +154,22 @@ void loop()
   unsigned long copyCount;
   flagRX = 0;
 
-  if (nrf24.available())
+
+  if (manager.available())
   {
     // Should be a message for us now   
-    uint8_t buf[RH_RF24_MAX_MESSAGE_LEN];
-    uint8_t len = sizeof(buf);
-    if (nrf24.recv(buf, &len))
+
+    if (manager.recvfromAck(buf, &len, &from))
     {
       Serial.println("message: ");
       Serial.println((char*)buf);
       sprintf(rxMessage,"%s",buf);
 
-      uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
       sprintf(data,"%i%d%d%d",modeA,gar,pum,chi);
-      nrf24.send(data, sizeof(data));
-      nrf24.waitPacketSent();
-      Serial.print("Sent a reply");
 
-      Serial.print((rxMessage[0]));
-      Serial.print((rxMessage[1]));
-      Serial.print((rxMessage[2]));
-      Serial.println((rxMessage[3]));
+      if (!manager.sendtoWait(data, sizeof(data), from))
+        Serial.println("sendtoWait failed");
+
 
       Serial.println(atoi(rxMessage));
       int proto = atoi(rxMessage);
