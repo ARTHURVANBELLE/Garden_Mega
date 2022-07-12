@@ -20,7 +20,7 @@ const int IN_PUM = 36;
 const int IN_GAR = 34;
 const int IN_CHI = 32;
 
-int modeA = 3;
+int modeA = 1;
 bool autom = 1;
 bool extra;
 bool gar;
@@ -36,7 +36,6 @@ bool lastState_3;
 bool currentState_3;
 bool pumping;
 bool flagArros;
-bool flagRX;
 bool overheatPump;
 
 int currentTime;
@@ -118,7 +117,7 @@ void counter(void)
 void txData(){
 
   uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
-  sprintf(data,"%i%d%d%d%d.%d",modeA,gar,pum,chi,overheatPump,currentLev);
+  sprintf(data,"%d%d%i%d%d%d%d.%03d",digitalRead(IN_NIV2),digitalRead(IN_NIV1),modeA,gar,pum,chi,overheatPump,currentLev);
 
   if ((currentTime - lastTimeTx ) >= 2000){
     nrf24.send(data, sizeof(data));
@@ -144,15 +143,17 @@ void setup()
   pinMode(A0,INPUT);
 
   Timer1.initialize(1000000);
-  Timer1.attachInterrupt(counter); // blinkLED to run every 1 second
-  
+  Timer1.attachInterrupt(counter); // blinkLED to run every 10 seconds
+
   if (!nrf24.init())
     Serial.println("init failed");
   // Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
   if (!nrf24.setChannel(1))
     Serial.println("setChannel failed");
   if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm))
-    Serial.println("setRF failed");   
+    Serial.println("setRF failed"); 
+
+  nrf24.setChannel(0x90);  
 
   Serial.println("setup Done") ;
 }
@@ -185,7 +186,7 @@ void loop()
     analogWrite(27,255);
   }
 
-  if ((currentState != lastState && currentState ==1) or flagRX)
+  if ((currentState != lastState && currentState ==1) )
   {
     if (autom){
       autom = 0;
@@ -270,7 +271,7 @@ void loop()
     lastTime = currentTime;
   }
 
-  if ((currentState_3 != lastState_3 && currentState_3 ==1) or flagRX)
+  if ((currentState_3 != lastState_3 && currentState_3 ==1))
   {
     if (chi){
       chicken(0);
@@ -280,7 +281,7 @@ void loop()
     }
   }
 
-  if ((currentState_1 != lastState_1 && currentState_1 ==1)or flagRX)
+  if ((currentState_1 != lastState_1 && currentState_1 ==1))
   {
     if (gar){
       garden(0);
@@ -290,7 +291,7 @@ void loop()
     }
   }
 
-  if ((currentState_2 != lastState_2 && currentState_2 ==1)or flagRX)
+  if ((currentState_2 != lastState_2 && currentState_2 ==1))
   {
     if (pum){
       pump(0);
