@@ -10,15 +10,25 @@
 
 // Abrevoir toutes les 2h pendant 3s
 
-#define CLIENT_ADDRESS 1
-#define SERVER_ADDRESS 2
+RF24 radio(23, 22); // CE, CSN
+const byte addresses [][6] = {"00001", "00002"};  //Setting the two addresses. One for transmitting and one for receiving
+char messagerx [30];
+char messagetx[30];
 
-
-const int IN_NIV1 = 30;
-const int IN_NIV2 = 28;
+const int IN_NIV1 = 3;
+const int IN_NIV2 = 4;
 const int IN_PUM = 36;
 const int IN_GAR = 34;
 const int IN_CHI = 32;
+
+const int R_pump = 38;
+const int R_garden = 42;
+const int R_chicken = 40;
+
+const int L_au = 25;
+const int L_m = 26;
+const int L_niv1 = 29;
+const int L_niv2 = 27; 
 
 int modeA = 1;
 bool autom = 1;
@@ -39,6 +49,7 @@ bool flagArros;
 bool overheatPump;
 
 int currentTime;
+int levTime = 0;
 int lastTime = 0;
 int currentLux;
 int lastLux;
@@ -47,28 +58,23 @@ int lastLev;
 int lastLev_1;
 int lastTimeLev;
 int flagLev;
+int lastSent = 0;
 
 volatile unsigned long count = 0; // use volatile for shared variables
 
-RH_NRF24 nrf24(23,22);
-
 Ultrasonic ultrasonic(5, 6);
 
-
-const int RH_RF24_MAX_MESSAGE_LEN = 25;
 int lastTimeTx;
 
 
 void pump(bool mode){
   if (mode == 1 && !digitalRead(IN_NIV2) && !overheatPump){
-    analogWrite(38,255);
-    analogWrite(35, 0);
+    digitalWrite(R_pump,1);
     pum = 1;
     
   }
   else if (!mode){
-    analogWrite(38,0);
-    analogWrite(35, 255);
+    digitalWrite(R_pump,0);
     pum = 0;
      if (!autom && !extra){
       overheatPump = 0;
@@ -79,13 +85,11 @@ void pump(bool mode){
 
 void chicken(bool mode){
   if (mode){
-    analogWrite(39,255);
-    analogWrite(31,0);
+    digitalWrite(R_chicken, 1);
     chi = 1;
   }
   else if (!mode){
-    analogWrite(39,0);
-    analogWrite(31,255);
+    digitalWrite(R_chicken,0);
     chi = 0;
   }
   
@@ -93,13 +97,11 @@ void chicken(bool mode){
 
 void garden(bool mode){
   if (mode){
-    analogWrite(40,255);
-    analogWrite(33,0);
+    digitalWrite(R_garden,1);
     gar = 1;
   }
   else if (!mode){
-    analogWrite(33,255);
-    analogWrite(40,0);
+    digitalWrite(R_garden,0);
     gar = 0;
   }
   
@@ -114,26 +116,37 @@ void counter(void)
   
 }
 
-void txData(){
-
-  uint8_t data[RH_RF24_MAX_MESSAGE_LEN];
-  sprintf(data,"%d%d%i%d%d%d%d.%03d",digitalRead(IN_NIV2),digitalRead(IN_NIV1),modeA,gar,pum,chi,overheatPump,currentLev);
-
-  if ((currentTime - lastTimeTx ) >= 2000){
-    nrf24.send(data, sizeof(data));
-    nrf24.waitPacketSent();
-    lastTimeTx = currentTime;
-    Serial.println((char*)data);
-  }
-
+void txData()
+{
+  radio.stopListening();
+  sprintf(messagetx,"A%d%d%i%d%d%d%d%03dB",digitalRead(IN_NIV2),digitalRead(IN_NIV1),modeA,gar,pum,chi,overheatPump,currentLev);
+  Serial.println(messagetx);
+  radio.write(&messagetx, sizeof(messagetx));
+  delay(20);
 }
+
+void rxdata()
+{
+  radio.startListening();                            //This sets the module as receiver
+  if (radio.available())
+  {                                                     //Looking for incoming data
+    Serial.println("RX");
+    radio.read(&messagerx, sizeof(messagerx));           //Reading the data
+    delay(20);
+    //sprintf(messageTx,"%d-%d-%d-%d",oldstate_c, oldstate_g, oldstate_m, oldstate_p);
+    chicken(messagerx[0] - '0');
+    garden(messagerx[2] - '0');
+    modeA = messagerx[4] - '0';
+    pump(messagerx[6] - '0');
+  }
+}
+  
 
 void setup() 
 {
+  digitalWrite(IN_NIV1,HIGH);
   Serial.begin(115200);
 
-  digitalWrite(8,HIGH);
-  
   pinMode(24,INPUT);
   pinMode(IN_NIV1,INPUT);
   pinMode(IN_NIV2,INPUT);
@@ -142,18 +155,17 @@ void setup()
   pinMode(IN_PUM,INPUT);
   pinMode(A0,INPUT);
 
+  pinMode(R_chicken, OUTPUT);
+  pinMode(R_garden,OUTPUT);
+  pinMode(R_pump,OUTPUT);
   Timer1.initialize(1000000);
-  Timer1.attachInterrupt(counter); // blinkLED to run every 10 seconds
-
-  if (!nrf24.init())
-    Serial.println("init failed");
-  // Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
-  if (!nrf24.setChannel(1))
-    Serial.println("setChannel failed");
-  if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm))
-    Serial.println("setRF failed"); 
-
-  nrf24.setChannel(0x90);  
+  Timer1.attachInterrupt(counter);          // counter to run every 1 seconds
+  radio.begin();
+  radio.openWritingPipe(addresses[1]);     //Setting the address at which we will send the data
+  radio.openReadingPipe(1, addresses[0]);  //Setting the address at which we will receive the data
+  radio.setPALevel(RF24_PA_HIGH);          //You can set it as minimum or maximum depending on the distance between the transmitter and receiver. 
+  radio.startListening();                  //This sets the module as receiver
+  radio.setChannel(90);  
 
   Serial.println("setup Done") ;
 }
@@ -165,30 +177,39 @@ void loop()
   currentState_1 = digitalRead(IN_GAR);
   currentState_2 = digitalRead(IN_PUM);
   currentState_3 = digitalRead(IN_CHI);
-  currentTime = millis();
-  currentLev = ultrasonic.read(CM);
+  currentTime = millis(); 
   unsigned long copyCount;
 
+  if ((currentTime - levTime) >= 5000){   //get water level every 5s
+    currentLev = ultrasonic.read(CM);
+    levTime = currentTime;
+  }
 
-  txData();
+  rxdata();                               //receive data from HMI
+
+  if ((currentTime - lastSent) >= 3500){  //Send data every 3.5s
+    txData();
+    lastSent = currentTime;
+  }
+  
 
   if (digitalRead(IN_NIV1)){
-    analogWrite(29,0);
+    digitalWrite(L_niv1,1);
   }
   else{
-    analogWrite(29,255);
+    digitalWrite(L_niv1,0);
   }
 
   if (digitalRead(IN_NIV2)){
-    analogWrite(27,0);
+    digitalWrite(L_niv2,1);
   }
   else{
-    analogWrite(27,255);
+    digitalWrite(L_niv2,0);
   }
 
   if ((currentState != lastState && currentState ==1) )
   {
-    if (autom){
+    if (autom){         //mode Auto 
       autom = 0;
       extra = 0;
       modeA = 3;
@@ -196,7 +217,7 @@ void loop()
         garden(0);
       }
     }
-    else if ((!autom && !extra)){
+    else if ((!autom && !extra)){    //
       extra = 1;
       modeA = 2;
     }
@@ -208,8 +229,8 @@ void loop()
 
   if (autom){ // remplissage auto et arrosage à la tombée de la nuit
     currentLux = analogRead(A0);
-    analogWrite(26,255);
-    analogWrite(25,0);
+    digitalWrite(L_au,1);
+    digitalWrite(L_m,0);
 
     if ((digitalRead(IN_NIV1)==0 && (digitalRead(IN_NIV2)==0))){
       pump(1);
@@ -223,12 +244,12 @@ void loop()
       pump(0);
     }
 
-    if (currentLux <= 120 && flagArros){
+    if (currentLux <= 120){
       noInterrupts();
       copyCount = count;
       interrupts();
       garden(1);
-      delay(1000);
+  
     }
     noInterrupts();
     if (flagArros && count == copyCount){
@@ -239,12 +260,12 @@ void loop()
   }
   
   else if (!autom && !extra){
-    analogWrite(25,255);
-    analogWrite(26,0);
+    digitalWrite(L_au,0);
+    digitalWrite(L_m,1);
   }
   else if (extra){ //mode extra : remplissage auto mais pas d'arrosage dans le noir
-    analogWrite(25,0);
-    analogWrite(26,0);
+    digitalWrite(L_au,1);
+    digitalWrite(L_m,1);
 
     if ((digitalRead(IN_NIV1)==0 && (digitalRead(IN_NIV2)==0))){
       pump(1);
